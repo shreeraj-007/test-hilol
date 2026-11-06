@@ -1,6 +1,7 @@
 import os
 import sys
-
+import plotly.io as pio
+pio.templates.default = "plotly_dark"
 import streamlit as st
 from streamlit.runtime import exists as _runtime_exists
 
