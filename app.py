@@ -1,7 +1,5 @@
 import os
 import sys
-import plotly.io as pio
-pio.templates.default = "plotly_dark"
 
 import streamlit as st
 from streamlit.runtime import exists as _runtime_exists
@@ -142,19 +140,69 @@ with tab2:
     corr = df[CORR_COLS].corr()
 
     st.subheader("Radiation vs weather")
-    cols = st.columns(3)
-    for col_ui, var in zip(cols, ["Temperature", "Humidity", "Speed"]):
-        fig = px.scatter(
-            df,
-            x=var,
-            y="Radiation",
-            opacity=0.3,
-            title=f"Radiation vs {var}",
-            labels={"Radiation": "Radiation (W/m²)"},
+
+    VAR_LABELS = {
+        "Temperature": "Temperature",
+        "Humidity": "Humidity (%)",
+        "Speed": "Wind speed",
+        "Pressure": "Pressure",
+        "WindDirection(Degrees)": "Wind direction (degrees)",
+    }
+    scatter_var = st.radio(
+        "Pick a weather variable",
+        list(VAR_LABELS),
+        format_func=lambda v: VAR_LABELS[v],
+        horizontal=True,
+    )
+    daytime_only = st.checkbox(
+        "Daytime only (hide readings where radiation is 0)",
+        value=False,
+        help="At night radiation is 0, which forms a flat line of dots along the bottom.",
+    )
+
+    plot_df = df[df["Radiation"] > 0] if daytime_only else df
+    var_label = VAR_LABELS[scatter_var]
+    r = plot_df["Radiation"].corr(plot_df[scatter_var])
+
+    # Average radiation within 20 slices of the weather variable (the red line)
+    binned = (
+        plot_df.assign(bin=pd.cut(plot_df[scatter_var], bins=20))
+        .groupby("bin", observed=True)
+        .agg(x=(scatter_var, "mean"), y=("Radiation", "mean"))
+        .reset_index(drop=True)
+    )
+
+    fig = px.scatter(
+        plot_df,
+        x=scatter_var,
+        y="Radiation",
+        opacity=0.15,
+        title=f"Radiation vs {var_label}",
+        labels={scatter_var: var_label, "Radiation": "Radiation (W/m²)"},
+    )
+    fig.update_traces(marker=dict(size=4, color=ORANGE), name="Single readings", showlegend=True)
+    fig.add_trace(
+        go.Scatter(
+            x=binned["x"],
+            y=binned["y"],
+            mode="lines+markers",
+            name="Average radiation",
+            line=dict(color=RED, width=3),
         )
-        fig.update_traces(marker=dict(size=3, color=ORANGE))
-        col_ui.plotly_chart(style(fig, 340), width="stretch")
-        col_ui.caption(f"Correlation with radiation: **{corr.loc['Radiation', var]:+.2f}**")
+    )
+    fig.update_layout(legend=dict(orientation="h", y=1.1, x=0))
+    st.plotly_chart(style(fig, 560), width="stretch")
+
+    strength = "weak" if abs(r) < 0.3 else "moderate" if abs(r) < 0.6 else "strong"
+    sign = "positive" if r > 0 else "negative"
+    trend = "tends to rise" if r > 0 else "tends to fall"
+    st.info(
+        f"**How to read this:** each faint orange dot is one reading, and the red line is the "
+        f"average radiation at each level of {var_label.lower()}. "
+        f"The correlation is **{r:+.2f}**, a **{strength} {sign}** relationship: radiation "
+        f"{trend} as {var_label.lower()} increases. "
+        f"Correlation does not prove one causes the other, since both can simply follow the time of day."
+    )
 
     st.subheader("How everything relates")
     left, right = st.columns([2, 1])
