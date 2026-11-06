@@ -1,12 +1,25 @@
 import os
+import sys
+
+import streamlit as st
+from streamlit.runtime import exists as _runtime_exists
+
+# If this file is run with plain `python app.py` (or the VS Code play button),
+# relaunch it through Streamlit instead of crashing.
+if not _runtime_exists():
+    from streamlit.web import cli as _stcli
+
+    sys.argv = ["streamlit", "run", os.path.abspath(__file__)]
+    sys.exit(_stcli.main())
 
 import pandas as pd
-import matplotlib.pyplot as plt
-import streamlit as st
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 st.set_page_config(page_title="Solar Radiation Explorer", layout="wide")
 
-DATA_FILE = "SolarPrediction.csv"
+DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "SolarPrediction.csv")
 CORR_COLS = ["Radiation", "Temperature", "Pressure", "Humidity", "WindDirection(Degrees)", "Speed"]
 
 
@@ -62,41 +75,44 @@ with tab1:
     if window.empty:
         st.warning("No data in this range.")
     else:
-        fig, ax = plt.subplots(figsize=(12, 4))
-        ax.plot(window["DateTime"], window["Radiation"])
-        ax.set_xlabel("Time")
-        ax.set_ylabel("Radiation (W/m²)")
-        ax.set_title(f"Solar radiation over {n_days} day(s) from {start}")
-        fig.autofmt_xdate()
-        st.pyplot(fig)
+        fig = px.line(
+            window,
+            x="DateTime",
+            y="Radiation",
+            title=f"Solar radiation over {n_days} day(s) from {start}",
+            labels={"DateTime": "Time", "Radiation": "Radiation (W/m²)"},
+        )
+        st.plotly_chart(fig, width="stretch")
 
 # ------------------------------------------------------------------ tab 2
 with tab2:
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-    for ax, col in zip(axes, ["Temperature", "Humidity", "Speed"]):
-        ax.scatter(df[col], df["Radiation"], s=3, alpha=0.3)
-        ax.set_xlabel(col)
-        ax.set_ylabel("Radiation")
-        ax.set_title(f"Radiation vs {col}")
-    fig.tight_layout()
-    st.pyplot(fig)
+    cols = st.columns(3)
+    for col_ui, var in zip(cols, ["Temperature", "Humidity", "Speed"]):
+        fig = px.scatter(
+            df,
+            x=var,
+            y="Radiation",
+            opacity=0.3,
+            title=f"Radiation vs {var}",
+            labels={"Radiation": "Radiation (W/m²)"},
+        )
+        fig.update_traces(marker=dict(size=3))
+        col_ui.plotly_chart(fig, width="stretch")
 
     corr = df[CORR_COLS].corr()
-    left, right = st.columns([1, 1])
+    left, right = st.columns([2, 1])
 
     with left:
-        fig, ax = plt.subplots(figsize=(7, 6))
-        im = ax.imshow(corr, cmap="coolwarm", vmin=-1, vmax=1)
-        fig.colorbar(im, ax=ax, label="Correlation")
-        ax.set_xticks(range(len(CORR_COLS)))
-        ax.set_xticklabels(CORR_COLS, rotation=90)
-        ax.set_yticks(range(len(CORR_COLS)))
-        ax.set_yticklabels(CORR_COLS)
-        for i in range(len(CORR_COLS)):
-            for j in range(len(CORR_COLS)):
-                ax.text(j, i, f"{corr.iloc[i, j]:.2f}", ha="center", va="center", fontsize=8)
-        ax.set_title("Correlation heatmap")
-        st.pyplot(fig)
+        fig = px.imshow(
+            corr,
+            text_auto=".2f",
+            color_continuous_scale="RdBu_r",
+            zmin=-1,
+            zmax=1,
+            aspect="auto",
+            title="Correlation heatmap",
+        )
+        st.plotly_chart(fig, width="stretch")
 
     with right:
         st.subheader("Correlation with radiation")
@@ -104,39 +120,52 @@ with tab2:
 
 # ------------------------------------------------------------------ tab 3
 with tab3:
-    hourly_rad = df.groupby("Hour")["Radiation"].mean()
-    hourly_temp = df.groupby("Hour")["Temperature"].mean()
+    hourly = df.groupby("Hour")[["Radiation", "Temperature"]].mean().reset_index()
 
     c1, c2 = st.columns(2)
 
     with c1:
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.bar(hourly_rad.index, hourly_rad.values)
-        ax.set_xlabel("Hour of day")
-        ax.set_ylabel("Mean radiation")
-        ax.set_title("Average radiation by hour of day")
-        ax.set_xticks(range(0, 24))
-        st.pyplot(fig)
+        fig = px.bar(
+            hourly,
+            x="Hour",
+            y="Radiation",
+            title="Average radiation by hour of day",
+            labels={"Radiation": "Mean radiation (W/m²)", "Hour": "Hour of day"},
+        )
+        fig.update_xaxes(dtick=1)
+        st.plotly_chart(fig, width="stretch")
 
     with c2:
-        fig, ax1 = plt.subplots(figsize=(10, 4))
-        ax1.plot(hourly_rad.index, hourly_rad.values, color="orange", marker="o")
-        ax1.set_xlabel("Hour of day")
-        ax1.set_ylabel("Mean radiation (W/m²)", color="orange")
-        ax2 = ax1.twinx()
-        ax2.plot(hourly_temp.index, hourly_temp.values, color="red", marker="s")
-        ax2.set_ylabel("Mean temperature", color="red")
-        ax1.set_xticks(range(0, 24))
-        ax1.set_title("Radiation and temperature by hour of day")
-        st.pyplot(fig)
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        fig.add_trace(
+            go.Scatter(
+                x=hourly["Hour"], y=hourly["Radiation"], name="Radiation",
+                mode="lines+markers", line=dict(color="orange"),
+            ),
+            secondary_y=False,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=hourly["Hour"], y=hourly["Temperature"], name="Temperature",
+                mode="lines+markers", line=dict(color="red"), marker=dict(symbol="square"),
+            ),
+            secondary_y=True,
+        )
+        fig.update_layout(title="Radiation and temperature by hour of day")
+        fig.update_xaxes(title_text="Hour of day", dtick=1)
+        fig.update_yaxes(title_text="Mean radiation (W/m²)", secondary_y=False)
+        fig.update_yaxes(title_text="Mean temperature", secondary_y=True)
+        st.plotly_chart(fig, width="stretch")
 
-    hours = sorted(df["Hour"].unique())
-    fig, ax = plt.subplots(figsize=(12, 5))
-    ax.boxplot([df.loc[df["Hour"] == h, "Radiation"] for h in hours], positions=hours)
-    ax.set_xlabel("Hour of day")
-    ax.set_ylabel("Radiation")
-    ax.set_title("Radiation distribution by hour of day")
-    st.pyplot(fig)
+    fig = px.box(
+        df,
+        x="Hour",
+        y="Radiation",
+        title="Radiation distribution by hour of day",
+        labels={"Radiation": "Radiation (W/m²)", "Hour": "Hour of day"},
+    )
+    fig.update_xaxes(dtick=1)
+    st.plotly_chart(fig, width="stretch")
 
 # ------------------------------------------------------------------ tab 4
 with tab4:
